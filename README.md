@@ -1,2 +1,2 @@
 # SNanalysis
-testing output options for collections analysis
+Test collections analysis project 
