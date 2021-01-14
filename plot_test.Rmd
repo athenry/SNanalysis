@@ -1,0 +1,31 @@
+---
+title: "3D Scatterplot of clusters"
+author: "Alison Henry"
+date: "02/10/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+
+library(ggplot2)
+library(plot3D)
+library(plot3Drgl)
+library(rgl)
+library(knitr)
+
+knitr::opts_chunk$set(echo = FALSE)
+knit_hooks$set(webgl = hook_webgl)
+```
+
+## Including Plots - 3D test
+
+Interactive 3D scatterplot
+
+```{r cluster plot, include=FALSE}
+load("rescaledSN.RData")
+
+view <- scatter3D(x = rescaled_SN$Views, y = rescaled_SN$Publications, z = rescaled_SN$Citations, colvar = as.numeric(rescaled_SN$cluster), col = scheme, col.key = list(col.clab = "Cluster"), xlab = "Views", ylab = "Publications", zlab = "Citations")
+```
+```{r, webgl = TRUE, echo=FALSE}
+plotrgl()
+```

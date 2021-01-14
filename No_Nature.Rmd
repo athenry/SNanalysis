@@ -1,0 +1,238 @@
+---
+title: "Analysis of 2015-2019 Springer-Nature Journal Use"
+author: "Alison Henry and Thane Chambers"
+date: "25/11/2020"
+output: 
+  ioslides_presentation: 
+    fig_caption: yes
+    widescreen: yes
+editor_options: 
+  chunk_output_type: inline
+---
+
+```{r setup, echo=FALSE}
+knitr::opts_chunk$set(echo = FALSE, warning = FALSE, message = FALSE)
+```
+## Goals of this analysis 
+
+- Facilitate a comparison of Springer journals to which the University of Alberta Library subscribes
+- Group journals into clusters based on their use, where use includes citation, publication, and total item requests.
+
+```{r Package Loading}
+## Install packages if needed
+##install.packages("tidyverse")
+##install.packages("ggthemes")
+##install.packages("knitr")
+##install.packages("factoextra")
+##install.packages("viridis")
+##install.packages("cluster")
+
+## Load needed packages
+library(tidyverse)
+library(ggthemes)
+library(knitr)
+library(factoextra)
+library(viridis)
+library(cluster)
+```
+
+## Data Gathering
+To measure citation:  
+
+- Search Web of Science for publications by UAlberta authors, 2015-2019. Take the list of Cited References from these publications, and filter by source to keep only the Springer publications.
+
+To measure publication:  
+
+- Extract the Springer articles from WoS list of publications, augment with a Scopus search for publications by UAlberta authors in Springer titles not indexed by WoS
+
+To measure views/downloads:  
+
+- 2019 Total Item Requests from report provided by SpringerNature (TR_J1), removing those from the nature.com platform.
+
+```{r Load Data}
+load(file = "SNData.RData")
+```
+
+## Data Cleaning and Preparation
+- Cited Reference titles are in abbreviated format. ISS staff collected abbreviations from the Web of Science journal abbreviation table. They recorded `r format(nrow(filtered_AbTitles), big.mark = ",")` Springer abbreviations out of a list of `r format(nrow(Springer_list), big.mark = ",")` SpringerNature titles. 
+
+- All source titles from the three lists were converted to lower case and white space was trimmed to facilitate matching.
+
+
+## Summary of preparatory steps
+- Total number of publications retrieved from Web of Science: `r format(nrow(MAB), big.mark = ",")`
+- Number of Springer publications retrieved from Web of Science: `r format(nrow(filtered_pubs_WoS), big.mark = ",")` 
+- Additional publications added from Scopus: `r format(nrow(pubs_Scopus), big.mark = ",")`
+- Total number of publications: `r format(nrow(pubs), big.mark = ",")`
+- Number of unique journal titles represented: `r format(length(titles), big.mark = ",")`
+
+```{r Citation data preparation, cache=TRUE}
+## Create cited reference list
+CR <- select(MAB, PY, CR) %>%
+    separate_rows(CR, sep = ";") %>%
+    separate(CR, into = c("AU", "RPY", "SO", "VL", "PN", "DI"), sep = ",", remove = TRUE, extra = "warn", fill = "warn")
+
+## Convert source titles to lower case and trim whitespace
+CR$SO <- trimws(str_to_lower(CR$SO, locale = "en"))
+
+##Filter Cited References to keep only Springer titles
+filtered_CR <- CR %>%
+    filter(SO %in% filtered_AbTitles$Abbreviated.title)
+
+```
+
+
+## Summary of preparatory steps (cont'd)
+- Number of citations: `r format(nrow(CR), big.mark = ",")`
+- Citations to Springer journals: `r format(nrow(filtered_CR), big.mark = ",")`
+
+
+```{r Usage data preparation}
+## Get citation count by year of publication of citing article
+citecount <- filtered_CR %>%
+    count(SO, PY) %>%
+    spread(PY, n)
+```
+
+## Data Completeness
+Once the lists were merged, it became apparent that we did not have evidence of all three types of use for all titles. A zero value was entered where no publication, citation, or view/download use was found.
+
+- Titles in which UAlberta authors published: `r format(nrow(pubcount), big.mark = ",")`
+- Titles for which citations were found: `r format(nrow(citecount), big.mark = ",")`
+- Titles for which view/download activity was reported: `r format(nrow(usage), big.mark = ",")`
+
+## Limitations of this analysis
+- Due to time constraints, we did not run both Web of Science and Scopus searches for UAlberta publications to obtain citations, but this should be done if a more rigorous analysis is needed.
+
+- We used 5 years of publication and citation data, but only one year of Item Request data. Publications and Citations were summed over the 5-year period. 
+
+```{r K-Means prep}
+## Sum publication and citation counts (2015-2019)
+pubcount$Total <- rowSums(pubcount[2:6], na.rm = TRUE)
+citecount$Total <- rowSums(citecount[2:6], na.rm = TRUE)
+
+citelist <- merge(citecount, filtered_AbTitles, by.x = "SO", by.y = "Abbreviated.title", all.x = TRUE) %>%
+    select(Title, Total)
+citelist$Title <- trimws(str_to_lower(citelist$Title))
+
+SNdata <- merge(select(pubcount, SO, Total), citelist, by.x = "SO", by.y = "Title", all = TRUE, suffixes = c("Pubs", "Cites"))
+
+SNdata <- merge(usage, SNdata, by.x = "Title", by.y = "SO", all = TRUE) %>%
+    dplyr::rename(Views = Reporting_Period_Total, Publications = TotalPubs, Citations = TotalCites) %>% 
+    mutate_all(~replace(.,is.na(.), 0))
+
+rescaled_SN <- SNdata %>%
+    transmute(Views = log10(Views+1), Publications = log10(Publications+1), Citations = log10(Citations+1))
+
+```
+
+```{r Optimal cluster determination}
+## Create function to run the algorithm and store the total within clusters sum of squares
+set.seed(123)
+kmean_withinss <- function(k) {
+    cluster <- kmeans(rescaled_SN, k, algorithm = c("Hartigan-Wong"), iter.max = 20)
+    return (cluster$tot.withinss)
+}
+## Set the maximum k value and run the algorithm over a range of k
+max_k <- 10
+wss <- sapply(2:max_k, kmean_withinss)
+
+## Creste the data frame from which we will plot the graph
+elbow <- data.frame(2:max_k, wss)
+
+## Plot the elbow graph
+elbow_graph <- ggplot(elbow, aes(x=X2.max_k, y= wss)) +
+    geom_point() +
+    geom_line() +
+    theme_minimal() +
+    xlab("Number of Clusters")
+
+```
+## K-Means Clustering
+All three of these data measures are very positively skewed, such that initial clustering attempts did not give very clear differentiation. Log transformation was performed in order to solve this problem.
+
+In order to determine the optimal number of clusters, we ran the clustering algorithm  times multiple times, and plotted the within clusters sum of squares.
+
+## Elbow graph
+```{r Display Elbow Graph, fig.cap="Graph to determine optimal number of clusters", fig.align='center'}
+elbow_graph 
+```
+
+
+
+```{r Assign Journals to Clusters}
+k=5
+SN_clusters <- kmeans(rescaled_SN, k, algorithm = "Hartigan-Wong", iter.max = 20)
+SNdata$cluster <- as.factor(SN_clusters$cluster)
+
+```
+
+## Assigning Journals to a Cluster 
+We re-ran the clustering algorithm, and assigned each journal to a cluster. The cluster sizes worked out as follows:
+```{r Cluster Sizes, fig.align="center"}
+## Create a data frame to view the cluster sizes
+cluster_size <- data.frame(c(1:k), SN_clusters$size)
+knitr::kable(cluster_size, align = c("l"), col.names = c("Cluster", "Number of Titles"))
+```
+
+## Silhouette Width evaluation
+```{r Silhouette, fig.align='center'}
+sil <- silhouette(SN_clusters$cluster, dist(rescaled_SN))
+fviz_silhouette(sil, print.summary = FALSE) + scale_color_viridis(discrete = TRUE) + scale_fill_viridis(discrete = TRUE)
+```
+
+## Visualizing the Clusters 
+```{r Cluster Plot, fig.align='center'}
+scheme <- viridis(k)
+fviz_cluster(SN_clusters, data = rescaled_SN, geom = c("point"), palette = scheme, xlab = FALSE, ylab = FALSE) +
+    theme_minimal() 
+
+```
+
+## Cluster View of Citations
+```{r, fig.cap="Citations vs. views, by cluster", fig.align='center'}
+rescaled_SN$cluster <- as.factor(SN_clusters$cluster)
+
+citations_cluster_plot <- ggplot(rescaled_SN, aes(x=Citations, y=Views)) +
+    geom_point(aes(colour = cluster)) + scale_color_viridis(discrete = TRUE)
+
+citations_cluster_plot
+```
+```{r}
+## Returning Journal Titles to Title case
+pubcount$SO <- str_to_title(pubcount$SO)
+citelist$Title <- str_to_title(citelist$Title)
+usage$Title <- str_to_title(usage$Title)
+```
+
+## Top Journals (Publication) {.flexbox .vcenter}
+```{r Publication Table, results="asis"}
+knitr::kable(head(select(arrange(pubcount, desc(pubcount$Total)), SO, Total)), align = c("l"), format.args = list(big.mark = ","), col.names = c("Title", "Number of Publications"))
+```
+
+## Top Journals (Citation) {.flexbox .vcenter}
+```{r Citation Table, results="asis"}
+knitr::kable(head(arrange(citelist, desc(citelist$Total))), align = c("l"), format.args = list(big.mark = ","), col.names = c("Title", "Number of Citations"))
+```
+
+## Top Journals (View/Download) {.flexbox .vcenter}
+```{r View/Download Table, results="asis"}
+knitr::kable(head(select(arrange(usage, desc(usage$Reporting_Period_Total)), Title, Reporting_Period_Total)), format.args = list(big.mark = ","), align = c("l"), col.names = c("Title", "Number of Item Requests"))
+```
+
+## Top Journals (ranking method)
+```{r}
+## Add ranking column for each measure of use
+
+SNdata$PubRank <- rank(as.numeric(SNdata$Publications), ties.method = "min")
+SNdata$CiteRank <- rank(as.numeric(SNdata$Citations), ties.method = "min")
+SNdata$ViewRank <- rank(as.numeric(SNdata$Views), ties.method = "min")
+SNdata$RankSum <- rowSums(SNdata[7:9], na.rm = TRUE)
+
+SNdata <- arrange(SNdata, desc(RankSum))
+SNdata$Title <- str_to_title(SNdata$Title)
+
+knitr::kable(head(select(SNdata, Title, RankSum)), align = c("l"), format.args = list(big.mark = ","), col.names = c("Title", "Overall Use"))
+```
+
+
