@@ -16,7 +16,5 @@ Examination of journal categories in each cluster:
 
 *[Open Access cluster](https://athenry.github.io/SNanalysis/OA_plot.html)
 
-[Slides](https://athenry.github.io/SNanalysis/No_Nature.html)
-
 
 
